@@ -1,0 +1,20 @@
+syntax = "proto3";
+option go_package = ".;protos";
+package protos;
+
+enum Operations {
+  Mut = 0;
+  Del = 1;
+}
+
+message Operate {
+  Operations op = 0;
+  optional string value = 2;
+
+  string sign = 5;
+  int64 time = 6;
+}
+
+message Query {
+  
+}

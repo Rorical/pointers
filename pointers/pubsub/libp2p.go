@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"pointers/pointers/config"
+
 	libp2p "github.com/libp2p/go-libp2p"
 	connmgr "github.com/libp2p/go-libp2p-connmgr"
 	"github.com/libp2p/go-libp2p-core/crypto"
@@ -20,7 +22,7 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-func getLibp2p(ctx context.Context) (*host.Host, error) {
+func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, error) {
 	priv, _, err := crypto.GenerateKeyPair(
 		crypto.Ed25519,
 		-1,
@@ -31,10 +33,7 @@ func getLibp2p(ctx context.Context) (*host.Host, error) {
 	p2p, err := libp2p.New(
 		ctx,
 		libp2p.Identity(priv),
-		libp2p.ListenAddrStrings(
-			"/ip4/0.0.0.0/tcp/0",
-			"/ip4/0.0.0.0/udp/0/quic",
-		),
+		libp2p.ListenAddrStrings(config.ListenAddrs...),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
 		libp2p.Security(secio.ID, secio.New),
 		libp2p.Transport(libp2pquic.NewTransport),
@@ -55,12 +54,10 @@ func getLibp2p(ctx context.Context) (*host.Host, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Printf("\n[*] Your Multiaddress Is: %v/p2p/%s\n", p2p.Addrs()[0], p2p.ID().Pretty())
+	fmt.Printf("\n[*] Listening at %v/p2p/%s\n", p2p.Addrs()[0], p2p.ID().Pretty())
 
 	var wg sync.WaitGroup
-	for _, peerAddr := range []string{
-		"/ip4/127.0.0.1/tcp/24277/p2p/12D3KooWEqAh2WrvtuVDx3uVVFbqSzPJrPMBHrZMSBczGPK4JFtM",
-	} {
+	for _, peerAddr := range config.BootstrapNodes {
 		addr, _ := ma.NewMultiaddr(peerAddr)
 		peerinfo, _ := peer.AddrInfoFromP2pAddr(addr)
 		wg.Add(1)
@@ -75,7 +72,7 @@ func getLibp2p(ctx context.Context) (*host.Host, error) {
 	}
 	wg.Wait()
 
-	peerChan := initMDNS(ctx, p2p, "pointers")
+	peerChan := initMDNS(ctx, p2p, config.MDnsName)
 	go func() {
 		for {
 			peer := <-peerChan

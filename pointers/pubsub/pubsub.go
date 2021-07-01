@@ -2,9 +2,9 @@ package pubsub
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/libp2p/go-libp2p-core/host"
+	"github.com/libp2p/go-libp2p-core/peer"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 )
 
@@ -27,7 +27,6 @@ func (sub *Subscriber) Listen() {
 	for {
 		msg, err := sub.sub.Next(sub.ctx)
 		if err != nil {
-			fmt.Println(err)
 			close(sub.Messages)
 			return
 		}
@@ -39,11 +38,28 @@ func (sub *Subscriber) Publish(message *[]byte) error {
 	return sub.topic.Publish(sub.ctx, *message)
 }
 
-func NewPubSub(ctx context.Context) (*PubSub, error) {
-	p2p, err := getLibp2p(ctx)
+func (sub *Subscriber) Peers() []peer.ID {
+	return sub.topic.ListPeers()
+}
+
+func (sub *Subscriber) ListenPeers() error {
+	handler, err := sub.topic.EventHandler()
 	if err != nil {
-		return nil, err
+		return err
 	}
+	for {
+		event, err := handler.NextPeerEvent(sub.ctx)
+		if err != nil {
+			close(sub.Messages)
+			return err
+		}
+		if event.Type == pubsub.PeerJoin {
+
+		}
+	}
+}
+
+func NewPubSub(ctx context.Context, p2p *host.Host) (*PubSub, error) {
 	pubsub, err := getPubsub(ctx, p2p)
 	if err != nil {
 		return nil, err
