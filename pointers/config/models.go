@@ -3,7 +3,7 @@ package config
 type Libp2pConf struct {
 	BootstrapNodes []string
 	ListenAddrs    []string
-	MDnsName       string
+	GroupName      string
 }
 
 type DatabaseConfig struct {

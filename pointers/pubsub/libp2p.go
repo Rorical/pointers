@@ -14,22 +14,25 @@ import (
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
 	routing "github.com/libp2p/go-libp2p-core/routing"
+	discovery "github.com/libp2p/go-libp2p-discovery"
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
 	secio "github.com/libp2p/go-libp2p-secio"
 	libp2ptls "github.com/libp2p/go-libp2p-tls"
+	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, error) {
+func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, *dht.IpfsDHT, error) {
 	priv, _, err := crypto.GenerateKeyPair(
 		crypto.Ed25519,
 		-1,
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+	var idht *dht.IpfsDHT
 	p2p, err := libp2p.New(
 		ctx,
 		libp2p.Identity(priv),
@@ -45,16 +48,18 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, error) 
 		)),
 		libp2p.NATPortMap(),
 		libp2p.Routing(func(h host.Host) (routing.PeerRouting, error) {
-			idht, err := dht.New(ctx, h)
+			idht, err = dht.New(ctx, h)
 			return idht, err
 		}),
 		libp2p.EnableAutoRelay(),
 		libp2p.EnableNATService(),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	fmt.Printf("\n[*] Listening at %v/p2p/%s\n", p2p.Addrs()[0], p2p.ID().Pretty())
+
+	p2p = rhost.Wrap(p2p, idht)
 
 	var wg sync.WaitGroup
 	for _, peerAddr := range config.BootstrapNodes {
@@ -72,7 +77,7 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, error) 
 	}
 	wg.Wait()
 
-	peerChan := initMDNS(ctx, p2p, config.MDnsName)
+	peerChan := initMDNS(ctx, p2p, config.GroupName)
 	go func() {
 		for {
 			peer := <-peerChan
@@ -82,7 +87,30 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, error) 
 			}
 		}
 	}()
-	return &p2p, nil
+
+	err = idht.Bootstrap(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	routingDiscovery := discovery.NewRoutingDiscovery(idht)
+	discovery.Advertise(ctx, routingDiscovery, config.GroupName)
+	peerChan2, err := routingDiscovery.FindPeers(ctx, config.GroupName)
+	if err != nil {
+		return nil, nil, err
+	}
+	go func() {
+		for {
+			peer := <-peerChan2
+			if peer.ID != "" && peer.ID != p2p.ID() {
+				fmt.Println("Found peer:", peer.ID, ", connecting")
+				if err := p2p.Connect(ctx, peer); err != nil {
+					fmt.Println("Connection failed:", err)
+				}
+			}
+		}
+	}()
+
+	return &p2p, idht, nil
 }
 
 func getPubsub(ctx context.Context, p2p *host.Host) (*pubsub.PubSub, error) {

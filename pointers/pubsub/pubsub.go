@@ -20,18 +20,25 @@ type Subscriber struct {
 	ctx      context.Context
 	topic    *pubsub.Topic
 	sub      *pubsub.Subscription
+	eve      *pubsub.TopicEventHandler
+	NewPeers chan *peer.ID
 	Messages chan *[]byte
 }
 
-func (sub *Subscriber) Listen() {
+func (sub *Subscriber) Listen() error {
 	for {
 		msg, err := sub.sub.Next(sub.ctx)
 		if err != nil {
 			close(sub.Messages)
-			return
+			return err
 		}
 		sub.Messages <- &msg.Data
 	}
+	return nil
+}
+
+func (sub *Subscriber) StopListen() {
+	sub.sub.Cancel()
 }
 
 func (sub *Subscriber) Publish(message *[]byte) error {
@@ -43,20 +50,20 @@ func (sub *Subscriber) Peers() []peer.ID {
 }
 
 func (sub *Subscriber) ListenPeers() error {
-	handler, err := sub.topic.EventHandler()
-	if err != nil {
-		return err
-	}
 	for {
-		event, err := handler.NextPeerEvent(sub.ctx)
+		event, err := sub.eve.NextPeerEvent(sub.ctx)
 		if err != nil {
-			close(sub.Messages)
+			close(sub.NewPeers)
 			return err
 		}
 		if event.Type == pubsub.PeerJoin {
-
+			sub.NewPeers <- &event.Peer
 		}
 	}
+}
+
+func (sub *Subscriber) StopListenPeers() {
+	sub.eve.Cancel()
 }
 
 func NewPubSub(ctx context.Context, p2p *host.Host) (*PubSub, error) {
@@ -80,10 +87,17 @@ func (ps *PubSub) Subscribe(topicName string) (*Subscriber, error) {
 	if err != nil {
 		return nil, err
 	}
+	handler, err := topic.EventHandler()
+	if err != nil {
+		return nil, err
+	}
+	topic.Relay()
 	suber := &Subscriber{
 		ctx:      ps.ctx,
 		topic:    topic,
 		sub:      sub,
+		eve:      handler,
+		NewPeers: make(chan *peer.ID, bufSize),
 		Messages: make(chan *[]byte, bufSize),
 	}
 	return suber, nil
