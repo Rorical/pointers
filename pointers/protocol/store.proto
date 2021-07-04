@@ -1,0 +1,10 @@
+syntax = "proto3";
+option go_package = ".;protocol";
+package protocol;
+
+message StoreValue {
+    string value = 2;
+
+    string sign = 3;
+    int64 time = 4;
+}

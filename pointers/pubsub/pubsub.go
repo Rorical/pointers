@@ -2,6 +2,7 @@ package pubsub
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/peer"
@@ -29,12 +30,12 @@ func (sub *Subscriber) Listen() error {
 	for {
 		msg, err := sub.sub.Next(sub.ctx)
 		if err != nil {
+			fmt.Printf("Error while listening to the topic: %s", err)
 			close(sub.Messages)
 			return err
 		}
 		sub.Messages <- &msg.Data
 	}
-	return nil
 }
 
 func (sub *Subscriber) StopListen() {

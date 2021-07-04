@@ -5,38 +5,102 @@ import (
 	"fmt"
 	"time"
 
-	"pointers/pointers/protocol"
+	protos "pointers/pointers/protocol"
 
+	"google.golang.org/protobuf/proto"
+
+	"github.com/Rorical/go-msgio/protoio"
 	"github.com/libp2p/go-libp2p-core/host"
 	"github.com/libp2p/go-libp2p-core/network"
 	"github.com/libp2p/go-libp2p-core/peer"
-	"github.com/libp2p/go-msgio/protoio"
-	"google.golang.org/protobuf/proto"
 )
-
-const FetchProtoID = protocol.ID("/libp2p/fetch/0.0.1")
 
 type Fetcher struct {
 	ctx context.Context
 	p2p *host.Host
 }
 
-func NewFetcher(ctx context.Context, p2p *host.Host) (*Fetcher, error) {
-	return &Fetcher{
+type Response func(key string) (*protos.Operate, error)
+
+func NewFetcher(ctx context.Context, p2p *host.Host) *Fetcher {
+	fetcher := &Fetcher{
 		ctx: ctx,
 		p2p: p2p,
-	}, nil
+	}
+	return fetcher
 }
 
-func (f *Fetcher) Fetch(pid *peer.ID, key string) {
+func (f *Fetcher) Feed(res Response) {
+	(*f.p2p).SetStreamHandler(protos.FetchProtocol, func(s network.Stream) {
+		f.receive(s, res)
+	})
+}
+
+func (f *Fetcher) Fetch(pid *peer.ID, key string) (*protos.Operate, error) {
 	ctx, cancel := context.WithTimeout(f.ctx, time.Second*10)
 	defer cancel()
-	s, err := p.host.NewStream(ctx, pid, FetchProtoID)
-
-	ask := &protocol.Ask{
+	s, err := (*f.p2p).NewStream(ctx, *pid, protos.FetchProtocol)
+	if err != nil {
+		return nil, err
+	}
+	ask := &protos.Ask{
 		Key: key,
 	}
-	sendBuff(f.ctx, s, ask)
+
+	if err := sendBuff(f.ctx, s, ask); err != nil {
+		s.Reset()
+		return nil, err
+	}
+
+	if err := s.CloseWrite(); err != nil {
+		s.Reset()
+		return nil, err
+	}
+
+	res := &protos.Answer{}
+
+	if err := readBuff(f.ctx, s, res); err != nil {
+		_ = s.Reset()
+		return nil, err
+	}
+
+	switch res.Status {
+	case protos.Status_Ok:
+		return res.Op, nil
+	case protos.Status_NotExist:
+		return nil, nil
+	default:
+		return nil, protos.UnknowProtocolError
+	}
+}
+
+func (f *Fetcher) receive(s network.Stream, getResponse Response) {
+	defer s.Close()
+
+	ask := &protos.Ask{}
+	if err := readBuff(f.ctx, s, ask); err != nil {
+		s.Reset()
+		return
+	}
+
+	res, err := getResponse(ask.Key)
+
+	var response *protos.Answer
+	if err == nil {
+		response = &protos.Answer{
+			Status: protos.Status_Ok,
+			Op:     res,
+		}
+	} else {
+		response = &protos.Answer{
+			Status: protos.Status_NotExist,
+		}
+
+	}
+	if err := sendBuff(f.ctx, s, response); err != nil {
+		s.Reset()
+		return
+	}
 }
 
 func sendBuff(ctx context.Context, s network.Stream, msg proto.Message) error {
@@ -60,7 +124,7 @@ func sendBuff(ctx context.Context, s network.Stream, msg proto.Message) error {
 	}
 
 	if retErr != nil {
-		fmt.Println("error writing response to %s: %s", s.Conn().RemotePeer(), retErr)
+		fmt.Printf("error writing response to %s: %s", s.Conn().RemotePeer(), retErr)
 	}
 	return retErr
 }

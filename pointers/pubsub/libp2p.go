@@ -18,7 +18,6 @@ import (
 	dht "github.com/libp2p/go-libp2p-kad-dht"
 	pubsub "github.com/libp2p/go-libp2p-pubsub"
 	libp2pquic "github.com/libp2p/go-libp2p-quic-transport"
-	secio "github.com/libp2p/go-libp2p-secio"
 	libp2ptls "github.com/libp2p/go-libp2p-tls"
 	rhost "github.com/libp2p/go-libp2p/p2p/host/routed"
 	ma "github.com/multiformats/go-multiaddr"
@@ -38,7 +37,6 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, *dht.Ip
 		libp2p.Identity(priv),
 		libp2p.ListenAddrStrings(config.ListenAddrs...),
 		libp2p.Security(libp2ptls.ID, libp2ptls.New),
-		libp2p.Security(secio.ID, secio.New),
 		libp2p.Transport(libp2pquic.NewTransport),
 		libp2p.DefaultTransports,
 		libp2p.ConnectionManager(connmgr.NewConnManager(
@@ -60,22 +58,6 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, *dht.Ip
 	fmt.Printf("\n[*] Listening at %v/p2p/%s\n", p2p.Addrs()[0], p2p.ID().Pretty())
 
 	p2p = rhost.Wrap(p2p, idht)
-
-	var wg sync.WaitGroup
-	for _, peerAddr := range config.BootstrapNodes {
-		addr, _ := ma.NewMultiaddr(peerAddr)
-		peerinfo, _ := peer.AddrInfoFromP2pAddr(addr)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := p2p.Connect(ctx, *peerinfo); err != nil {
-				fmt.Println(err)
-			} else {
-				fmt.Println("Connection established with node:", *peerinfo)
-			}
-		}()
-	}
-	wg.Wait()
 
 	peerChan := initMDNS(ctx, p2p, config.GroupName)
 	go func() {
@@ -109,6 +91,22 @@ func Libp2p(ctx context.Context, config *config.Libp2pConf) (*host.Host, *dht.Ip
 			}
 		}
 	}()
+
+	var wg sync.WaitGroup
+	for _, peerAddr := range config.BootstrapNodes {
+		addr, _ := ma.NewMultiaddr(peerAddr)
+		peerinfo, _ := peer.AddrInfoFromP2pAddr(addr)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := p2p.Connect(ctx, *peerinfo); err != nil {
+				fmt.Println(err)
+			} else {
+				fmt.Println("Connection established with node:", *peerinfo)
+			}
+		}()
+	}
+	wg.Wait()
 
 	return &p2p, idht, nil
 }
